@@ -1,0 +1,205 @@
+body { margin: 0; background: #0E0C0A; }
+.fse-wrap { min-height: 100vh; background: #0E0C0A; color: #E8E0CE; font-family: 'IBM Plex Mono', monospace; padding: 14px 14px 48px; }
+
+    /* --- top bar --- */
+    .fse-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .fse-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(24px, 5vw, 34px); line-height: 1; letter-spacing: 2px; color: #F4EEDF; margin: 0; }
+    .fse-tabs { display: flex; gap: 4px; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 3px; }
+    .fse-tabs button { background: transparent; border: none; color: #8A8072; padding: 8px 14px; border-radius: 7px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .fse-tabs button.on { background: #FFB347; color: #1A120D; }
+    .fse-iconbtn { background: #17130F; border: 1px solid #2E2822; color: #C8BFA9; border-radius: 8px; padding: 9px 12px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; }
+    .fse-iconbtn.on { border-color: #FFB347; color: #FFB347; }
+
+    /* --- generic controls --- */
+    .fse-row-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .fse-select { background: #17130F; color: #E8E0CE; border: 1px solid #2E2822; border-radius: 8px; padding: 9px 11px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; max-width: 100%; }
+    .fse-toggle { display: flex; border: 1px solid #2E2822; border-radius: 8px; overflow: hidden; }
+    .fse-toggle button { background: #17130F; color: #8A8072; border: none; padding: 8px 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; }
+    .fse-toggle button.on { background: #2A2119; color: #FFB347; }
+    .fse-pill { flex: 0 0 auto; min-width: 40px; padding: 8px 10px; text-align: center; border-radius: 8px; border: 1px solid #2E2822; background: #17130F; color: #C8BFA9; font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .fse-pill.active { background: #FFB347; border-color: #FFB347; color: #1A120D; box-shadow: 0 0 14px rgba(255,179,71,.45); }
+    .fse-pills { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+    .fse-play { background: linear-gradient(180deg,#FFC46B,#F09A2E); color: #1A120D; border: none; border-radius: 8px; padding: 9px 15px; font-family: 'Bebas Neue', sans-serif; font-size: 16px; letter-spacing: 1.5px; cursor: pointer; box-shadow: 0 0 16px rgba(255,179,71,.3); }
+    .fse-pill:focus-visible, .fse-select:focus-visible, .fse-play:focus-visible, .fse-fretbtn:focus-visible, .fse-iconbtn:focus-visible, .fse-tabs button:focus-visible { outline: 2px solid #FFB347; outline-offset: 2px; }
+    .fse-hint { font-size: 11px; color: #8A8072; }
+    .fse-pill:disabled { opacity: .5; cursor: default; }
+    .fse-tabout { background: #0B0908; border: 1px solid #2E2822; border-radius: 8px; padding: 12px; margin-top: 10px; overflow-x: auto; font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.5; color: #C8BFA9; white-space: pre; }
+    .fse-charlist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .fse-char { padding: 6px 9px; border-radius: 6px; background: #241E17; font-size: 11px; color: #C8BFA9; }
+    .fse-char.tri { background: #3A1A17; color: #FF9B92; }
+    .fse-char.inscale { border: 1px solid #4A4032; }
+    .fse-micbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: #141A19; border: 1px solid #2C4340; border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; }
+    .fse-micdot { width: 9px; height: 9px; border-radius: 50%; background: #E5544A; box-shadow: 0 0 10px rgba(229,84,74,.9); animation: fse-pulse 1.4s ease-in-out infinite; }
+    @keyframes fse-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    .fse-micnote { font-family: 'Bebas Neue', sans-serif; font-size: 30px; line-height: 1; color: #5FD3C4; min-width: 34px; }
+    .fse-cents { font-size: 11px; color: #8A8072; }
+    .fse-cents.intune { color: #5FD3C4; font-weight: 600; }
+    .fse-micerr { font-size: 11px; color: #F0705E; }
+    .fse-micok { font-size: 11px; color: #5FD3C4; font-weight: 600; }
+
+    .fse-riffgrid { background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .fse-brushes { display: flex; flex-wrap: wrap; gap: 4px; }
+    .fse-brush { min-width: 32px; padding: 7px 8px; border-radius: 7px; border: 1px solid #2E2822; background: #1D1811; color: #C8BFA9; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .fse-brush.on { background: #FFB347; border-color: #FFB347; color: #1A120D; }
+    .fse-brush.tri { color: #FF9B92; }
+    .fse-brush.tri.on { background: #E5544A; border-color: #E5544A; color: #2A0906; }
+    .fse-drumrow { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .fse-drumlabel { flex: 0 0 42px; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #6E6658; }
+    .fse-drumrow .fse-steps { flex: 1; }
+    .fse-step.drum { aspect-ratio: auto; height: 20px; }
+    .fse-step.drum.k.on { background: #E5544A; border-color: #E5544A; }
+    .fse-step.drum.s.on { background: #FFB347; border-color: #FFB347; }
+    .fse-step.drum.h.on { background: #5FD3C4; border-color: #5FD3C4; }
+    .fse-steps { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+    .fse-step { aspect-ratio: 1; border-radius: 7px; border: 1px solid #2E2822; background: #14100C; color: #6E6658; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: transform .07s, box-shadow .07s; }
+    .fse-step.accent { border-color: #5A4C36; }
+    .fse-step.ped { background: #8C6BE8; color: #150A2E; border-color: #8C6BE8; }
+    .fse-step.note { background: #E8E0CE; color: #1A120D; border-color: #E8E0CE; }
+    .fse-step.note.tri { background: #E5544A; color: #2A0906; border-color: #E5544A; }
+    .fse-step.now { transform: translateY(-3px) scale(1.06); box-shadow: 0 0 14px rgba(255,179,71,.8); outline: 2px solid #FFB347; }
+    @media (min-width: 560px) { .fse-steps { grid-template-columns: repeat(16, 1fr); } }
+    @media (prefers-reduced-motion: reduce) { .fse-step.now { transform: none; } .fse-micdot { animation: none; } }
+    .fse-slot { display: inline-flex; align-items: stretch; border: 1px solid #2E2822; border-radius: 8px; overflow: hidden; background: #1D1811; }
+    .fse-slotload { background: transparent; border: none; color: #C8BFA9; padding: 9px 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; }
+    .fse-slotload:hover { color: #FFB347; }
+    .fse-slotdel { background: transparent; border: none; border-left: 1px solid #2E2822; color: #6E6658; padding: 0 9px; cursor: pointer; font-size: 14px; }
+    .fse-slotdel:hover { color: #E5544A; }
+    .fse-heat { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; }
+    .fse-heatcell { min-width: 30px; text-align: center; padding: 5px 4px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+    .fse-heatcell.none { background: #1D1811; color: #4A4032; }
+    .fse-heatcell.good { background: #10322E; color: #5FD3C4; }
+    .fse-heatcell.mid { background: #3A2A14; color: #FFB347; }
+    .fse-heatcell.bad { background: #3A1A17; color: #FF9B92; }
+    .fse-tuner { background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 18px 16px; text-align: center; }
+    .fse-tunernote { font-family: 'Bebas Neue', sans-serif; font-size: 76px; line-height: 1; color: #F4EEDF; }
+    .fse-meter { margin: 14px 0 6px; }
+    .fse-meter-track { position: relative; height: 34px; background: #14100C; border: 1px solid #2E2822; border-radius: 8px; overflow: hidden; }
+    .fse-meter-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #5FD3C4; opacity: .55; transform: translateX(-1px); }
+    .fse-meter-needle { position: absolute; top: 4px; bottom: 4px; width: 5px; border-radius: 3px; transform: translateX(-2px); transition: left .07s linear, background .1s; }
+    .fse-meter-labels { display: flex; justify-content: space-between; font-size: 10px; color: #6E6658; margin-top: 5px; }
+    .fse-tunerval { font-size: 13px; color: #C8BFA9; margin-bottom: 14px; }
+    .fse-strings { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .fse-stringbtn { min-width: 52px; padding: 9px 10px; border-radius: 8px; border: 1px solid #2E2822; background: #1D1811; color: #C8BFA9; cursor: pointer; font-family: 'IBM Plex Mono', monospace; }
+    .fse-stringbtn.on { border-color: #5FD3C4; background: #10322E; color: #9FF0E4; box-shadow: 0 0 14px rgba(95,211,196,.35); }
+    .fse-strnum { display: block; font-size: 9px; color: #6E6658; }
+    .fse-stringbtn.on .fse-strnum { color: #6FBFB3; }
+    .fse-strname { display: block; font-size: 16px; font-weight: 600; }
+    .fse-hintbar { display: flex; align-items: center; gap: 10px; background: #1B2422; border: 1px solid #2C4340; border-radius: 10px; padding: 10px 13px; margin-bottom: 10px; font-size: 12px; color: #A8D8D0; line-height: 1.45; }
+    .fse-hintnum { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; background: #5FD3C4; color: #062421; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+
+    /* --- settings drawer --- */
+    .fse-drawer { background: #14100C; border: 1px solid #2E2822; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .fse-drawer-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .fse-drawer-row + .fse-drawer-row { margin-top: 8px; }
+    .fse-tag { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #6E6658; min-width: 62px; }
+
+    /* --- transport --- */
+    .fse-transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 9px 11px; margin-bottom: 10px; }
+    .fse-bpm-num { font-family: 'Bebas Neue', sans-serif; font-size: 24px; color: #F4EEDF; line-height: 1; }
+    .fse-bpm-label { font-size: 9px; color: #8A8072; letter-spacing: 1px; margin-left: 3px; }
+    .fse-slider { flex: 1 1 90px; min-width: 80px; accent-color: #FFB347; height: 4px; }
+    .fse-beats { display: flex; gap: 6px; align-items: center; }
+    .fse-beat { width: 10px; height: 10px; border-radius: 50%; background: #2E2822; transition: background .05s, box-shadow .05s, transform .05s; }
+    .fse-beat.hit { background: #E8E0CE; transform: scale(1.25); }
+    .fse-gaptag { font-size: 9px; letter-spacing: 1.5px; color: #E5544A; border: 1px solid #E5544A; border-radius: 4px; padding: 2px 5px; }
+    .fse-beat.grp { background: #4A4032; }
+    .fse-beat.hit.accent { background: #FFB347; box-shadow: 0 0 10px rgba(255,179,71,.7); }
+    .fse-div { width: 1px; align-self: stretch; background: #2E2822; margin: 0 2px; }
+
+    /* --- board --- */
+    .fse-board-scroll { overflow-x: auto; border-radius: 10px; -webkit-overflow-scrolling: touch; }
+    .fse-board { position: relative; display: inline-block; min-width: 100%; background: linear-gradient(180deg,#262019 0%,#1C1510 55%,#171009 100%); border-radius: 10px; padding: 14px 0 6px; box-shadow: inset 0 2px 10px rgba(0,0,0,.6), 0 4px 24px rgba(0,0,0,.5); }
+    .fse-board.lefty { transform: scaleX(-1); }
+    .fse-board.lefty .fse-lbl, .fse-board.lefty .fse-num { display: inline-block; transform: scaleX(-1); }
+    .fse-row { display: flex; align-items: center; position: relative; height: 40px; }
+    .fse-cell { position: relative; width: var(--cw); flex: 0 0 var(--cw); height: 100%; display: flex; align-items: center; justify-content: center; }
+    .fse-cell.open { width: 44px; flex: 0 0 44px; }
+    .fse-stringline { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); background: linear-gradient(180deg,#B7B2A4,#6E675A); pointer-events: none; }
+    .fse-fretwire { position: absolute; right: 0; top: -8px; bottom: -8px; width: 3px; background: linear-gradient(90deg,#EDEFF2,#9BA0A8,#6E7278); border-radius: 2px; pointer-events: none; }
+    .fse-nut { position: absolute; right: 0; top: -10px; bottom: -10px; width: 7px; background: linear-gradient(90deg,#F2EAD6,#CDC2A5); border-radius: 3px; pointer-events: none; }
+    .fse-inlay { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 30%,#EDE8DA,#B8B2A0); opacity: .5; pointer-events: none; }
+    .fse-inlay.d1 { transform: translate(-50%, calc(-50% - 34px)); }
+    .fse-inlay.d2 { transform: translate(-50%, calc(-50% + 34px)); }
+    .fse-cell.in-pos { background: rgba(255,179,71,.08); }
+    .fse-fretbtn { position: relative; z-index: 2; width: 32px; height: 32px; border-radius: 50%; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; color: transparent; transition: transform .08s ease, box-shadow .08s ease, background .08s ease, opacity .08s ease; }
+    .fse-fretbtn.in-scale { background: #E8E0CE; color: #1A120D; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+    .fse-fretbtn.root { background: radial-gradient(circle at 35% 30%,#FFD48A,#F09A2E); color: #241300; box-shadow: 0 0 12px rgba(255,179,71,.75), 0 1px 4px rgba(0,0,0,.6); }
+    .fse-fretbtn.chord-tone { box-shadow: 0 0 0 2.5px #5FD3C4, 0 1px 4px rgba(0,0,0,.6); }
+    .fse-fretbtn.chord-root { background: #5FD3C4; color: #062421; box-shadow: 0 0 12px rgba(95,211,196,.8); }
+    .fse-fretbtn.nonchord { opacity: .3; }
+    .fse-fretbtn.octave { background: radial-gradient(circle at 35% 30%,#FFD48A,#F09A2E); color: #241300; box-shadow: 0 0 12px rgba(255,179,71,.7); }
+    .fse-fretbtn.fifth { background: #5FD3C4; color: #062421; }
+    .fse-fretbtn.third { background: #C79BE8; color: #22102E; }
+    .fse-fretbtn.faint { background: #3A332A; color: #9C927F; }
+    .fse-fretbtn.harm { background: #7FB2FF; color: #06183A; box-shadow: 0 0 14px rgba(127,178,255,.85); transform: scale(1.15); }
+    .fse-fretbtn.tritone { background: #E5544A; color: #2A0906; box-shadow: 0 0 12px rgba(229,84,74,.7); }
+    .fse-fretbtn.pedal { background: #8C6BE8; color: #150A2E; box-shadow: 0 0 14px rgba(140,107,232,.8); }
+    .fse-fretbtn.hintstring { background: #4A4032; color: #C8BFA9; }
+    .fse-fretbtn.hintanswer { box-shadow: 0 0 0 2.5px #5FD3C4, 0 0 14px rgba(95,211,196,.6); }
+    .fse-fretbtn.isref { box-shadow: 0 0 0 3px #FFF3D6, 0 0 16px rgba(255,243,214,.8); }
+    .fse-fretbtn.dim { opacity: .16; box-shadow: none; }
+    .fse-fretbtn.sounding { transform: scale(1.25); background: #FFF3D6; color: #1A120D; box-shadow: 0 0 18px rgba(255,235,190,.95); opacity: 1; }
+    .fse-fretbtn.root.sounding { background: radial-gradient(circle at 35% 30%,#FFE6B8,#FFB347); box-shadow: 0 0 24px rgba(255,179,71,1); }
+    .fse-fretbtn:active { transform: scale(.92); }
+    .fse-numbers { display: flex; padding: 6px 0 2px; }
+    .fse-num { width: var(--cw); flex: 0 0 var(--cw); text-align: center; font-size: 10px; color: #8A8072; }
+    .fse-num.open { width: 44px; flex: 0 0 44px; }
+    .fse-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 11px; color: #8A8072; align-items: center; }
+    .fse-dotkey { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 5px; vertical-align: -2px; }
+
+    /* --- info panel --- */
+    .fse-panel { margin-top: 16px; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; overflow: hidden; }
+    .fse-paneltabs { display: flex; border-bottom: 1px solid #2E2822; }
+    .fse-paneltabs button { flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: #8A8072; padding: 11px 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .fse-paneltabs button.on { color: #FFB347; border-bottom-color: #FFB347; background: #1D1811; }
+    .fse-panelbody { padding: 14px 16px; }
+    .fse-section-label { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: #8A8072; margin: 0 0 8px; }
+    .fse-readout-notes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .fse-note-chip { padding: 6px 10px; border-radius: 6px; background: #241E17; font-size: 13px; font-weight: 600; color: #E8E0CE; transition: background .08s, color .08s, transform .08s, box-shadow .08s; }
+    .fse-note-chip.root { background: #3A2A14; color: #FFB347; }
+    .fse-note-chip.live { background: #FFF3D6; color: #1A120D; transform: translateY(-3px) scale(1.08); box-shadow: 0 0 16px rgba(255,235,190,.85); }
+    .fse-note-chip.root.live { background: #FFB347; color: #241300; box-shadow: 0 0 18px rgba(255,179,71,1); }
+    .fse-iv-live { color: #FFB347; font-weight: 600; }
+    .fse-chordgrid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .fse-chord { min-width: 62px; padding: 8px 10px; border-radius: 8px; border: 1px solid #2E2822; background: #1D1811; cursor: pointer; text-align: center; color: #C8BFA9; font-family: 'IBM Plex Mono', monospace; }
+    .fse-chord.active { border-color: #5FD3C4; background: #10322E; color: #9FF0E4; box-shadow: 0 0 12px rgba(95,211,196,.3); }
+    .fse-chord-name { font-size: 14px; font-weight: 600; display: block; }
+    .fse-chord-rn { font-size: 10px; color: #8A8072; display: block; margin-top: 2px; }
+    .fse-chord.active .fse-chord-rn { color: #6FBFB3; }
+    .fse-proggrid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .fse-progchord { min-width: 56px; padding: 8px 10px; border-radius: 8px; border: 1px solid #2E2822; background: #1D1811; color: #C8BFA9; cursor: pointer; text-align: center; font-family: 'IBM Plex Mono', monospace; transition: background .1s, box-shadow .1s, transform .1s; }
+    .fse-progchord.now { background: #FFB347; border-color: #FFB347; color: #1A120D; transform: translateY(-2px); box-shadow: 0 0 16px rgba(255,179,71,.55); }
+    .fse-progchord.now .fse-chord-rn { color: #5A3A0C; }
+    .fse-ivinfo { font-size: 12px; color: #C8BFA9; margin-top: 10px; line-height: 1.5; }
+    .fse-quiz { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+    .fse-quiz-note { font-family: 'Bebas Neue', sans-serif; font-size: 46px; line-height: 1; color: #FFB347; min-width: 54px; }
+    .fse-quiz-note.right { color: #5FD3C4; }
+    .fse-quiz-note.wrong { color: #F0705E; }
+    .fse-stat { font-size: 11px; color: #8A8072; }
+    .fse-stat b { color: #E8E0CE; font-size: 15px; font-weight: 600; display: block; }
+
+    @media (max-width: 560px) {
+      .fse-topbar { flex-wrap: wrap; }
+      .fse-tabs { order: 3; width: 100%; }
+      .fse-tabs button { flex: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) { .fse-fretbtn, .fse-beat, .fse-note-chip { transition: none; } .fse-fretbtn.sounding, .fse-fretbtn:active { transform: none; } }
+
+    @media print {
+      @page { size: landscape; margin: 10mm; }
+      .fse-noprint { display: none !important; }
+      .fse-wrap { background: #fff !important; color: #000 !important; padding: 0 !important; }
+      .fse-title, .fse-section-label, .fse-note-chip, .fse-legend { color: #000 !important; }
+      .fse-board-scroll { overflow: visible !important; }
+      .fse-board { --cw: 32px !important; background: #fff !important; box-shadow: none !important; border: 1px solid #000; }
+      .fse-stringline { background: #999 !important; }
+      .fse-fretwire, .fse-nut { background: #555 !important; }
+      .fse-cell.in-pos { background: #eee !important; }
+      .fse-fretbtn { width: 26px; height: 26px; font-size: 9px; }
+      .fse-fretbtn.in-scale, .fse-fretbtn.faint, .fse-fretbtn.fifth, .fse-fretbtn.third { background: #fff !important; color: #000 !important; border: 1.5px solid #000; box-shadow: none !important; }
+      .fse-fretbtn.root, .fse-fretbtn.octave, .fse-fretbtn.chord-root { background: #000 !important; color: #fff !important; box-shadow: none !important; }
+      .fse-fretbtn.chord-tone { box-shadow: 0 0 0 2.5px #000 !important; }
+      .fse-panel { border: 1px solid #000; background: #fff !important; }
+      .fse-note-chip { background: #eee !important; }
+      .fse-paneltabs { display: none !important; }
+    }
