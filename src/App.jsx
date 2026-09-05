@@ -4,7 +4,7 @@ import {
   SCALES, SCALE_GROUPS, PEDAL_CHARACTER, TUNINGS, TUNING_GROUPS,
   INLAY_FRETS, DOUBLE_INLAY, CAGED_SHAPES, CAGED_ORDER, SHAPE_TO_POSITION,
   diatonicChords, majorizeChord, PROGRESSIONS,
-  parseGroups, groupStarts, METER_PRESETS, buildPath, applyDirection,
+  parseGroups, groupStarts, METER_PRESETS, buildPath, applyDirection, chordVoicing,
 } from "./music/theory.js";
 import {
   ensureCtx, playMidi, playChord, playPower, playClick, playDrum,
@@ -43,7 +43,8 @@ export default function FretboardScaleExplorer() {
   const [tone, setTone] = useState({ bass: 0, mid: 0, treble: 0, level: 0.85 });
   const [palmMute, setPalmMute] = useState(false);
   const [droneOn, setDroneOn] = useState(false);
-  const [chordStyle, setChordStyle] = useState("power"); // triad | power
+  const [chordStyle, setChordStyle] = useState("power");
+  const [voicingMode, setVoicingMode] = useState("shape"); // shape | all // triad | power
   const [pedalFret, setPedalFret] = useState(0);
   const [speedTrain, setSpeedTrain] = useState(false);
   const [meter, setMeter] = useState("4");
@@ -223,6 +224,28 @@ export default function FretboardScaleExplorer() {
     : chords;
   const activeChord = progChord || (chordIdx !== null && chordList[chordIdx] ? chordList[chordIdx] : null);
   const chordSet = activeChord ? new Set(activeChord.pcs) : null;
+  // the actual shape a hand can hold, rather than every chord tone on the neck
+  const activeVoicing = activeChord
+    ? chordVoicing(tuning.midi, activeChord.pcs, activeChord.rootPc, fretCount,
+        { maxAbove: activeChord.pcs.length <= 2 ? 2 : 5 })
+    : null;
+  const voicingSet = activeVoicing && voicingMode === "shape"
+    ? new Set(activeVoicing.map((v) => v.string + ":" + v.fret))
+    : null;
+  const voicingRoot = activeVoicing ? activeVoicing[0] : null;
+  // strum the shape itself, so what you hear is what is drawn
+  const strumVoicing = (shape) => {
+    if (!shape || !shape.length) return false;
+    shape.forEach((v, i) => playMidi(tuning.midi[v.string] + v.fret, i * 0.028, 1.6));
+    return true;
+  };
+  const voicingText = (shape) => {
+    if (!shape) return "";
+    const per = {};
+    shape.forEach((v) => { per[v.string] = v.fret; });
+    return tuning.midi.map((_, i) => (per[i] === undefined ? "x" : per[i]))
+      .reverse().join(" ");
+  };
   const progChordAt = (pi, i) => {
     const p = PROGRESSIONS[pi];
     const deg = p.degrees[i];
@@ -389,7 +412,11 @@ export default function FretboardScaleExplorer() {
       const ch = progChordAt(progIdx, i % len);
       if (ch) {
         const beatMs = 60000 / bpmRef.current;
-        playChord(ch.pcs, ch.rootPc, Math.min(2.4, (beatMs * beatsRef.current) / 1000));
+        const sh = chordVoicing(tuning.midi, ch.pcs, ch.rootPc, fretCount,
+          { maxAbove: ch.pcs.length <= 2 ? 2 : 5 });
+        const dur = Math.min(2.4, (beatMs * beatsRef.current) / 1000);
+        if (sh && sh.length) sh.forEach((v, k) => playMidi(tuning.midi[v.string] + v.fret, k * 0.028, dur));
+        else playChord(ch.pcs, ch.rootPc, dur);
         setProgChord(ch);
         setProgStep(i % len);
       }
@@ -910,8 +937,10 @@ export default function FretboardScaleExplorer() {
       kind: "scale",
       isRoot: interval === 0,
       isTritone: interval === 6,
-      isChord: chordSet ? chordSet.has(pc) : false,
-      isChordRoot: activeChord ? pc === activeChord.rootPc : false,
+      isChord: voicingSet ? voicingSet.has(sLow + ":" + fret) : (chordSet ? chordSet.has(pc) : false),
+      isChordRoot: voicingSet
+        ? !!(voicingRoot && voicingRoot.string === sLow && voicingRoot.fret === fret)
+        : (activeChord ? pc === activeChord.rootPc : false),
       label: labelMode === "notes" ? pcName(pc, useFlats) : INTERVAL_LABELS[interval],
     };
   };
@@ -1145,7 +1174,7 @@ export default function FretboardScaleExplorer() {
           <div className="fse-toggle" role="group" aria-label="Direction">
             <button className={direction === "up" ? "on" : ""} onClick={() => setDirection("up")}>&uarr;</button>
             <button className={direction === "down" ? "on" : ""} onClick={() => setDirection("down")}>&darr;</button>
-            <button className={direction === "updown" ? "on" : ""} onClick={() => setDirection("updown")}>&updownarrow;</button>
+            <button className={direction === "updown" ? "on" : ""} onClick={() => setDirection("updown")}>\u2195</button>
           </div>
           <div className="fse-toggle" role="group" aria-label="Subdivision">
             {[[1, "\u2669"], [2, "\u266B"], [3, "3"], [4, "16"]].map(([v, lbl]) => (
@@ -1533,6 +1562,10 @@ export default function FretboardScaleExplorer() {
                     <button className={chordStyle === "power" ? "on" : ""} onClick={() => { setChordStyle("power"); setChordIdx(null); setProgChord(null); }}>Power (5)</button>
                     <button className={chordStyle === "triad" ? "on" : ""} onClick={() => { setChordStyle("triad"); setChordIdx(null); setProgChord(null); }}>Triads</button>
                   </div>
+                  <div className="fse-toggle" role="group" aria-label="Chord display">
+                    <button className={voicingMode === "shape" ? "on" : ""} onClick={() => setVoicingMode("shape")}>Shape</button>
+                    <button className={voicingMode === "all" ? "on" : ""} onClick={() => setVoicingMode("all")}>All tones</button>
+                  </div>
                   <span className="fse-hint">
                     {scale.intervals.length < 7 ? "built from the parent scale" : `in ${pcName(rootPc, useFlats)} ${scale.name}`}
                   </span>
@@ -1548,7 +1581,11 @@ export default function FretboardScaleExplorer() {
                         if (progPlaying) stopProg();
                         setProgChord(null);
                         setChordIdx(chordIdx === i ? null : i);
-                        if (chordStyle === "power") playPower(c.rootPc); else playChord(c.pcs, c.rootPc);
+                        const shape = chordVoicing(tuning.midi, c.pcs, c.rootPc, fretCount,
+                          { maxAbove: c.pcs.length <= 2 ? 2 : 5 });
+                        if (!strumVoicing(shape)) {
+                          if (chordStyle === "power") playPower(c.rootPc); else playChord(c.pcs, c.rootPc);
+                        }
                       }}>
                       <span className="fse-chord-name">{pcName(c.rootPc, useFlats)}{c.suffix}</span>
                       <span className="fse-chord-rn">{c.roman}</span>
@@ -1558,6 +1595,13 @@ export default function FretboardScaleExplorer() {
                 {activeChord && (
                   <div className="fse-ivinfo">
                     {pcName(activeChord.rootPc, useFlats)}{activeChord.suffix}: {activeChord.pcs.map((x) => pcName(x, useFlats)).join(" \u00B7 ")}
+                    {activeVoicing && (
+                      <>
+                        <br />
+                        <span className="fse-grip">{voicingText(activeVoicing)}</span>
+                        <span style={{ fontSize: 11, color: "#6E6658" }}> &nbsp;low &rarr; high, x = don't play</span>
+                      </>
+                    )}
                     {chordStyle === "power" && (() => {
                       const g = powerGrip(activeChord.rootPc);
                       if (!g) return null;
@@ -1727,7 +1771,12 @@ export default function FretboardScaleExplorer() {
                         if (!ch) return null;
                         return (
                           <button key={i} className={`fse-progchord ${progStep === i ? "now" : ""}`}
-                            onClick={() => { playChord(ch.pcs, ch.rootPc); setChordIdx(null); setProgChord(ch); setProgStep(i); }}>
+                            onClick={() => {
+                          const sh = chordVoicing(tuning.midi, ch.pcs, ch.rootPc, fretCount,
+                            { maxAbove: ch.pcs.length <= 2 ? 2 : 5 });
+                          if (!strumVoicing(sh)) playChord(ch.pcs, ch.rootPc);
+                          setChordIdx(null); setProgChord(ch); setProgStep(i);
+                        }}>
                             <span className="fse-chord-name">{pcName(ch.rootPc, useFlats)}{ch.suffix}</span>
                             <span className="fse-chord-rn">{ch.roman}</span>
                           </button>

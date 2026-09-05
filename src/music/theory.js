@@ -164,6 +164,58 @@ export const METER_PRESETS = [
   { label: "Djent 16 (3+3+2+3+3+2)", value: "3+3+2+3+3+2" },
 ];
 
+// Find a shape a hand can actually hold: root in the bass, one note per string,
+// inside a four-fret window, covering every chord tone.
+export function chordVoicing(tuningMidi, pcs, rootPc, maxFret, opts) {
+  const o = opts || {};
+  const n = tuningMidi.length;
+  const set = new Set(pcs);
+  const need = new Set(pcs);
+  const maxAbove = o.maxAbove === undefined ? 5 : o.maxAbove;
+  const span = o.span === undefined ? 3 : o.span;
+  let best = null;
+
+  for (let s0 = 0; s0 < n - 1; s0++) {
+    for (let f0 = 0; f0 <= maxFret; f0++) {
+      if (midiToPc(tuningMidi[s0] + f0) !== rootPc) continue;
+      const lo = Math.max(0, f0 - 2);
+      const hi = Math.min(maxFret, f0 + span);
+      const shape = [{ string: s0, fret: f0 }];
+      const covered = new Set([rootPc]);
+      const topString = Math.min(n - 1, s0 + maxAbove);
+      for (let s = s0 + 1; s <= topString; s++) {
+        // open strings are always reachable, plus everything in the hand window
+        const cands = [];
+        if (lo > 0 && set.has(midiToPc(tuningMidi[s]))) cands.push(0);
+        for (let f = lo; f <= hi; f++) if (set.has(midiToPc(tuningMidi[s] + f))) cands.push(f);
+        if (!cands.length) break; // a gap here would mean muting an inner string
+        // prefer a tone the shape still needs, then the lowest fret
+        let pick = null;
+        for (const f of cands) {
+          const pc = midiToPc(tuningMidi[s] + f);
+          if (!covered.has(pc)) { pick = f; break; }
+        }
+        if (pick === null) pick = cands[0];
+        shape.push({ string: s, fret: pick });
+        covered.add(midiToPc(tuningMidi[s] + pick));
+      }
+      let complete = true;
+      need.forEach((pc) => { if (!covered.has(pc)) complete = false; });
+      if (!complete) continue;
+      const frets = shape.map((x) => x.fret).filter((f) => f > 0);
+      const stretch = frets.length ? Math.max(...frets) - Math.min(...frets) : 0;
+      if (stretch > span + 1) continue;
+      // open strings ringing under a chord high up the neck is rarely what a
+      // player means, so nudge away from it once we leave open position
+      const opens = shape.filter((x) => x.fret === 0).length;
+      const openPenalty = f0 > 2 ? opens * 6 : 0;
+      const score = f0 * 2 + stretch * 3 - shape.length * 4 + s0 * 1.5 + openPenalty;
+      if (!best || score < best.score) best = { shape, score, rootString: s0, rootFret: f0 };
+    }
+  }
+  return best ? best.shape : null;
+}
+
 // ---------- Fingering path ----------
 // Box-style: start at the root on the lowest string and climb within a ~4-fret
 // reach, moving to the next string when a note passes that reach.
