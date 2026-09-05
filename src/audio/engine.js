@@ -49,9 +49,12 @@ export function playClick(time, accent, groupAccent) {
 export function playMidi(midi, when = 0, dur = 0.9, opts = {}) {
   try {
     const ctx = ensureCtx();
-    if (!guitar.ready && !guitar.initing) initGuitar();
-    if (guitar.ready && opts.raw !== true) {
-      if (pluck(midi, when, opts)) return;
+    if (opts.raw !== true) {
+      // real recorded samples first
+      if (playSample(midi, when, dur, opts)) return;
+      // modelled string while samples are still downloading
+      if (!guitar.ready && !guitar.initing) initGuitar();
+      if (guitar.ready && pluck(midi, when, opts)) return;
     }
     const drive = opts.drive !== undefined ? opts.drive : TONE.drive;
     const mute = opts.mute !== undefined ? opts.mute : TONE.mute;
@@ -376,6 +379,135 @@ export function pluck(midi, when = 0, opts = {}) {
   if (when > 0) setTimeout(() => { try { guitar.node.port.postMessage(msg); } catch (e) {} }, when * 1000);
   else guitar.node.port.postMessage(msg);
   return true;
+}
+
+
+// ---------- Sampler: real recorded instruments ----------
+// FluidR3_GM soundfont samples (CC-BY 3.0, Frank Wen), one mp3 every two
+// semitones; the sampler pitch-shifts at most one semitone from a real note.
+const SAMPLE_BASE = "/samples";
+export const INSTRUMENTS = {
+  distortion_guitar:     { name: "Distortion",   kind: "guitar" },
+  overdriven_guitar:     { name: "Overdrive",    kind: "guitar" },
+  electric_guitar_clean: { name: "Clean",        kind: "guitar" },
+  electric_guitar_muted: { name: "Muted",        kind: "guitar" },
+  acoustic_guitar_steel: { name: "Acoustic",     kind: "guitar" },
+  electric_bass_pick:    { name: "Bass",         kind: "bass" },
+};
+export const sampler = {
+  manifest: null,
+  buffers: {},     // inst -> { midi: AudioBuffer }
+  loading: {},
+  out: null,
+  eq: null,
+  ready: false,
+  current: "distortion_guitar",
+  muteInst: "electric_guitar_muted",
+  level: 0.85,
+};
+
+function samplerChain() {
+  const ctx = ensureCtx();
+  if (sampler.out) return sampler.out;
+  const bass = ctx.createBiquadFilter(); bass.type = "lowshelf"; bass.frequency.value = 140; bass.gain.value = 0;
+  const mid = ctx.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 700; mid.Q.value = 0.9; mid.gain.value = 0;
+  const treble = ctx.createBiquadFilter(); treble.type = "highshelf"; treble.frequency.value = 3000; treble.gain.value = 0;
+  const out = ctx.createGain(); out.gain.value = sampler.level;
+  bass.connect(mid); mid.connect(treble); treble.connect(out); out.connect(ctx.destination);
+  sampler.eq = { bass, mid, treble };
+  sampler.out = out;
+  sampler.input = bass;
+  return out;
+}
+
+async function loadManifest() {
+  if (sampler.manifest) return sampler.manifest;
+  const res = await fetch(`${SAMPLE_BASE}/manifest.json`);
+  sampler.manifest = await res.json();
+  return sampler.manifest;
+}
+
+export async function loadInstrument(inst) {
+  if (sampler.buffers[inst]) return true;
+  if (sampler.loading[inst]) return sampler.loading[inst];
+  sampler.loading[inst] = (async () => {
+    try {
+      const ctx = ensureCtx();
+      samplerChain();
+      const man = await loadManifest();
+      const notes = man[inst];
+      if (!notes) return false;
+      const store = {};
+      await Promise.all(notes.map(async (m) => {
+        const r = await fetch(`${SAMPLE_BASE}/${inst}/${m}.mp3`);
+        const ab = await r.arrayBuffer();
+        store[m] = await ctx.decodeAudioData(ab);
+      }));
+      sampler.buffers[inst] = store;
+      sampler.ready = true;
+      return true;
+    } catch (e) {
+      return false;
+    } finally {
+      delete sampler.loading[inst];
+    }
+  })();
+  return sampler.loading[inst];
+}
+
+function nearestSample(inst, midi) {
+  const store = sampler.buffers[inst];
+  if (!store) return null;
+  const keys = Object.keys(store).map(Number);
+  let best = keys[0];
+  for (const k of keys) if (Math.abs(k - midi) < Math.abs(best - midi)) best = k;
+  return best;
+}
+
+export function setInstrument(inst) {
+  if (!INSTRUMENTS[inst]) return;
+  sampler.current = inst;
+  loadInstrument(inst);
+}
+export function setSamplerEq(patch) {
+  samplerChain();
+  if (!sampler.eq) return;
+  if (patch.bass !== undefined) sampler.eq.bass.gain.value = patch.bass;
+  if (patch.mid !== undefined) sampler.eq.mid.gain.value = patch.mid;
+  if (patch.treble !== undefined) sampler.eq.treble.gain.value = patch.treble;
+  if (patch.level !== undefined) { sampler.level = patch.level; sampler.out.gain.value = patch.level; }
+}
+
+// Play a real recorded note. Returns false if samples are not loaded yet.
+export function playSample(midi, when = 0, dur = 0.9, opts = {}) {
+  const mute = opts.mute === undefined ? TONE.mute : opts.mute;
+  const inst = mute ? sampler.muteInst : sampler.current;
+  const store = sampler.buffers[inst];
+  if (!store) { loadInstrument(inst); return false; }
+  const src0 = nearestSample(inst, midi);
+  if (src0 === null || src0 === undefined) return false;
+  try {
+    const ctx = ensureCtx();
+    samplerChain();
+    const t0 = ctx.currentTime + when;
+    const src = ctx.createBufferSource();
+    src.buffer = store[src0];
+    src.playbackRate.value = Math.pow(2, (midi - src0) / 12);
+    const g = ctx.createGain();
+    const vel = Math.max(0.15, Math.min(1.5, opts.gain === undefined ? 1 : opts.gain));
+    const len = mute ? Math.min(dur, 0.22) : dur;
+    g.gain.setValueAtTime(vel, t0);
+    // let it ring, then release rather than cutting abruptly
+    g.gain.setValueAtTime(vel, t0 + len * 0.8);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + len + (mute ? 0.05 : 0.25));
+    src.connect(g);
+    g.connect(sampler.input);
+    src.start(t0);
+    src.stop(t0 + len + (mute ? 0.1 : 0.35));
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // ---------- Drums ----------

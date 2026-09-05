@@ -42,7 +42,14 @@ npm install
 npm run dev
 ```
 
+## Credits
+
+Instrument sounds are recorded samples from the **FluidR3_GM** soundfont by Frank Wen,
+released under [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/), packaged by
+[midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts).
+
 ## Stack
 
-Vite + React, Web Audio API for all sound and pitch detection. No backend, no
+Vite + React. Web Audio API for playback and pitch detection; notes are recorded
+samples, with a Karplus-Strong string model as the fallback while samples load. No backend, no
 accounts, no tracking. Saved setups live in your own browser.
