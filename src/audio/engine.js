@@ -49,6 +49,10 @@ export function playClick(time, accent, groupAccent) {
 export function playMidi(midi, when = 0, dur = 0.9, opts = {}) {
   try {
     const ctx = ensureCtx();
+    if (!guitar.ready && !guitar.initing) initGuitar();
+    if (guitar.ready && opts.raw !== true) {
+      if (pluck(midi, when, opts)) return;
+    }
     const drive = opts.drive !== undefined ? opts.drive : TONE.drive;
     const mute = opts.mute !== undefined ? opts.mute : TONE.mute;
     const t0 = ctx.currentTime + when;
@@ -105,6 +109,273 @@ export function playChord(pcs, rootPc, dur = 1.6, opts = {}) {
 export function playPower(rootPc, dur = 1.2, opts = {}) {
   const rootMidi = 36 + ((rootPc - 3 + 12) % 12);
   [rootMidi, rootMidi + 7, rootMidi + 12].forEach((m, i) => playMidi(m, i * 0.01, dur, opts));
+}
+
+
+// ---------- Guitar engine: physical string model + amp and cab ----------
+const KS_WORKLET_SRC = `
+// Karplus-Strong extended string model. One processor, many voices.
+class StringVoice {
+  constructor(sr, freq, opts) {
+    const o = opts || {};
+    this.sr = sr;
+    // loop delay; the averaging lowpass adds ~half a sample of delay
+    this.D = Math.max(2, sr / freq - 0.5);
+    this.size = Math.ceil(this.D) + 4;
+    this.buf = new Float32Array(this.size);
+    this.w = 0;
+    this.lp = 0;
+    this.dead = 0;
+    this.vel = o.vel === undefined ? 1 : o.vel;
+    const mute = !!o.mute;
+    // energy loss per period, converted to a per-sample coefficient
+    // the wave passes the loss once per circulation, i.e. once per period
+    this.decay = mute ? 0.59 : (o.sustain === undefined ? 0.982 : o.sustain);
+    // loop damping: higher = darker; highs die before the fundamental, as on a real string
+    this.damp = mute ? 0.62 : 0.28;
+    // pick excitation: noise burst, combed by pick position
+    const pick = mute ? 0.42 : (o.pickPos === undefined ? 0.14 : o.pickPos);
+    const combLen = Math.max(1, Math.round(this.D * pick));
+    const n = Math.floor(this.D);
+    const raw = new Float32Array(n + combLen + 2);
+    let prev = 0;
+    for (let i = 0; i < raw.length; i++) {
+      // lowpass the noise a little so the attack is not pure fizz
+      const white = Math.random() * 2 - 1;
+      prev = 0.6 * white + 0.4 * prev;
+      raw[i] = prev;
+    }
+    const tmp = new Float32Array(n);
+    let mean = 0;
+    for (let i = 0; i < n; i++) { tmp[i] = (raw[i + combLen] - raw[i]) * 0.5 * this.vel; mean += tmp[i]; }
+    mean /= n;
+    for (let i = 0; i < n; i++) this.buf[i] = tmp[i] - mean; // zero-mean, so no DC drifts in the loop
+    // a touch of pick attack noise on top of the string itself
+    this.click = mute ? 0.0 : 0.35 * this.vel;
+    this.clickN = Math.floor(sr * 0.004);
+    this.t = 0;
+  }
+  process() {
+    // fractional read for accurate tuning
+    let r = this.w - this.D;
+    while (r < 0) r += this.size;
+    const i0 = Math.floor(r);
+    const fr = r - i0;
+    const a = this.buf[i0 % this.size];
+    const b = this.buf[(i0 + 1) % this.size];
+    const s = a + (b - a) * fr;
+    // one-pole lowpass in the feedback path
+    this.lp = (1 - this.damp) * s + this.damp * this.lp;
+    const out = this.lp * this.decay;
+    this.buf[this.w] = out;
+    this.w = (this.w + 1) % this.size;
+    let y = out;
+    if (this.t < this.clickN && this.click > 0) {
+      y += (Math.random() * 2 - 1) * this.click * (1 - this.t / this.clickN) * 0.5;
+    }
+    this.t++;
+    if (Math.abs(out) < 1e-5) this.dead++; else this.dead = 0;
+    return y;
+  }
+  get finished() { return this.dead > this.sr * 0.05; }
+}
+
+class StringProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.voices = [];
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === 'pluck') {
+        if (this.voices.length > 24) this.voices.shift();
+        this.voices.push(new StringVoice(sampleRate, d.freq, d));
+      } else if (d.type === 'silence') {
+        this.voices.length = 0;
+      }
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0];
+    const ch = out[0];
+    const n = ch.length;
+    for (let i = 0; i < n; i++) ch[i] = 0;
+    for (let v = this.voices.length - 1; v >= 0; v--) {
+      const voice = this.voices[v];
+      for (let i = 0; i < n; i++) ch[i] += voice.process();
+      if (voice.finished) this.voices.splice(v, 1);
+    }
+    for (let i = 0; i < n; i++) {
+      const x = ch[i] * 0.5;
+      ch[i] = x > 1 ? 1 : x < -1 ? -1 : x;
+    }
+    for (let c = 1; c < out.length; c++) out[c].set(ch);
+    return true;
+  }
+}
+registerProcessor('string-processor', StringProcessor);
+`;
+
+export const AMP_PRESETS = {
+  clean:  { name: "Clean",  drive: 0.02, gain: 1.2, bass: 2,  mid: 0,  treble: 3, presence: 2, cab: "1x12" },
+  crunch: { name: "Crunch", drive: 0.38, gain: 3.5, bass: 3,  mid: 1,  treble: 3, presence: 3, cab: "4x12v" },
+  metal:  { name: "Metal",  drive: 0.78, gain: 9,   bass: 5,  mid: -4, treble: 5, presence: 5, cab: "4x12m" },
+  doom:   { name: "Doom",   drive: 0.92, gain: 11,  bass: 7,  mid: -2, treble: 1, presence: 0, cab: "4x12v" },
+};
+export const CABS = {
+  "4x12m":  { name: "4x12 Modern",  hp: 85,  lp: 5200, res: [[110, 5, 1.1], [420, -3, 1.2], [2600, 3, 1.6], [4200, -6, 1.0]] },
+  "4x12v":  { name: "4x12 Vintage", hp: 95,  lp: 4200, res: [[105, 4, 1.0], [900, -5, 1.3], [2000, 2, 1.4], [3600, -5, 1.0]] },
+  "1x12":   { name: "1x12 Combo",   hp: 110, lp: 6200, res: [[180, 3, 1.1], [1600, -2, 1.2], [3000, 2, 1.5]] },
+  "direct": { name: "Direct (no cab)", hp: 0, lp: 0, res: [] },
+};
+
+let amp = { ...AMP_PRESETS.metal, master: 1 };
+let guitar = { node: null, ready: false, initing: false, chain: null, cabName: null };
+
+export function driveCurve(amount) {
+  const n = 2048;
+  const c = new Float32Array(n);
+  // sharpens quadratically, so low settings stay genuinely clean
+  const k = 1 + amount * amount * 150;
+  // slight asymmetry for even-order harmonics, eased back as gain rises
+  const bias = (0.06 * amount) / (1 + amount * 4);
+  const norm = Math.tanh(k * (1 + bias));
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    c[i] = Math.max(-1, Math.min(1, Math.tanh(k * (x + bias)) / norm));
+  }
+  return c;
+}
+
+// Build a speaker impulse response from noise shaped by the cab's filter curve.
+// No audio assets to ship, and it still gives the response that makes distortion
+// read as "guitar cabinet" rather than "buzz".
+export async function buildCabIR(ctx, cabKey) {
+  const cab = CABS[cabKey] || CABS["4x12m"];
+  if (cabKey === "direct") return null;
+  const len = Math.floor(ctx.sampleRate * 0.06);
+  const off = new OfflineAudioContext(1, len, ctx.sampleRate);
+  const raw = off.createBuffer(1, len, off.sampleRate);
+  const d = raw.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const t = i / len;
+    d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 5) * (i < 3 ? 1 : 0.7);
+  }
+  const src = off.createBufferSource();
+  src.buffer = raw;
+  let node = src;
+  const hp = off.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = cab.hp; hp.Q.value = 0.8;
+  node.connect(hp); node = hp;
+  const lp1 = off.createBiquadFilter(); lp1.type = "lowpass"; lp1.frequency.value = cab.lp; lp1.Q.value = 1.1;
+  node.connect(lp1); node = lp1;
+  const lp2 = off.createBiquadFilter(); lp2.type = "lowpass"; lp2.frequency.value = cab.lp * 1.15; lp2.Q.value = 0.7;
+  node.connect(lp2); node = lp2;
+  cab.res.forEach(([f, g, q]) => {
+    const b = off.createBiquadFilter();
+    b.type = "peaking"; b.frequency.value = f; b.gain.value = g; b.Q.value = q;
+    node.connect(b); node = b;
+  });
+  node.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  // normalise so cab changes do not jump in volume
+  const ch = rendered.getChannelData(0);
+  let peak = 0;
+  for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+  if (peak > 0) for (let i = 0; i < ch.length; i++) ch[i] /= peak;
+  return rendered;
+}
+
+export async function initGuitar() {
+  if (guitar.ready || guitar.initing) return guitar.ready;
+  guitar.initing = true;
+  try {
+    const ctx = ensureCtx();
+    const blob = new Blob([KS_WORKLET_SRC], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    const node = new AudioWorkletNode(ctx, "string-processor", { outputChannelCount: [1] });
+    const tight = ctx.createBiquadFilter(); tight.type = "highpass"; tight.frequency.value = 80; tight.Q.value = 0.7;
+    const pre = ctx.createGain();
+    const shaper = ctx.createWaveShaper(); shaper.oversample = "4x";
+    const post = ctx.createBiquadFilter(); post.type = "lowpass"; post.frequency.value = 9000;
+    const bass = ctx.createBiquadFilter(); bass.type = "lowshelf"; bass.frequency.value = 120;
+    const mid = ctx.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 650; mid.Q.value = 0.9;
+    const treble = ctx.createBiquadFilter(); treble.type = "highshelf"; treble.frequency.value = 2600;
+    const presence = ctx.createBiquadFilter(); presence.type = "peaking"; presence.frequency.value = 3800; presence.Q.value = 1.1;
+    const conv = ctx.createConvolver(); conv.normalize = true;
+    const wet = ctx.createGain();
+    const master = ctx.createGain(); master.gain.value = 0.9;
+
+    node.connect(tight); tight.connect(pre); pre.connect(shaper); shaper.connect(post);
+    post.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(presence);
+    presence.connect(conv); conv.connect(wet); wet.connect(master);
+    master.connect(ctx.destination);
+
+    guitar.node = node;
+    guitar.chain = { tight, pre, shaper, post, bass, mid, treble, presence, conv, wet, master, presenceOut: presence };
+    guitar.ready = true;
+    await applyAmp();
+    return true;
+  } catch (e) {
+    guitar.ready = false;
+    return false;
+  } finally {
+    guitar.initing = false;
+  }
+}
+
+export async function applyAmp() {
+  if (!guitar.chain) return;
+  const c = guitar.chain;
+  c.shaper.curve = driveCurve(amp.drive);
+  c.pre.gain.value = amp.gain;
+  c.bass.gain.value = amp.bass;
+  c.mid.gain.value = amp.mid;
+  c.treble.gain.value = amp.treble;
+  c.presence.gain.value = amp.presence;
+  // hotter gain needs more makeup attenuation so levels stay even
+  c.master.gain.value = (0.95 / (1 + amp.gain * 0.16)) * (amp.master === undefined ? 1 : amp.master);
+  if (guitar.cabName !== amp.cab) {
+    const ir = await buildCabIR(ensureCtx(), amp.cab);
+    if (ir) {
+      c.conv.buffer = ir;
+      c.presence.disconnect();
+      c.presence.connect(c.conv);
+      c.conv.connect(c.wet);
+    } else {
+      // direct: route around the cab
+      c.presence.disconnect();
+      c.presence.connect(c.wet);
+    }
+    guitar.cabName = amp.cab;
+  }
+}
+
+export function setAmp(patch) {
+  amp = { ...amp, ...patch };
+  applyAmp();
+  return amp;
+}
+export function getAmp() { return amp; }
+export function ampPreset(key) {
+  if (!AMP_PRESETS[key]) return amp;
+  return setAmp({ ...AMP_PRESETS[key] });
+}
+export function pluck(midi, when = 0, opts = {}) {
+  if (!guitar.ready || !guitar.node) return false;
+  const freq = 440 * Math.pow(2, (midi - 69) / 12);
+  const msg = {
+    type: "pluck", freq,
+    vel: opts.gain === undefined ? 1 : Math.max(0.15, Math.min(1.6, opts.gain)),
+    mute: opts.mute === undefined ? TONE.mute : opts.mute,
+    pickPos: opts.pickPos,
+    sustain: opts.sustain,
+  };
+  if (when > 0) setTimeout(() => { try { guitar.node.port.postMessage(msg); } catch (e) {} }, when * 1000);
+  else guitar.node.port.postMessage(msg);
+  return true;
 }
 
 // ---------- Drums ----------
