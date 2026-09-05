@@ -10,6 +10,7 @@ import {
   ensureCtx, playMidi, playChord, playPower, playClick, playDrum,
   midiFile, downloadBytes, startMic, stopMic, freqToMidi, centsOff,
   startDrone, stopDrone, TONE,
+  initGuitar, setAmp, AMP_PRESETS, CABS,
 } from "./audio/engine.js";
 import { loadJSON, saveJSON } from "./storage.js";
 
@@ -34,6 +35,8 @@ export default function FretboardScaleExplorer() {
   const progRef = useRef({ timer: null });
   const [mode, setMode] = useState("scale"); // scale | riff | intervals | quiz
   const [drive, setDrive] = useState(true);
+  const [ampKey, setAmpKey] = useState("metal");
+  const [ampCfg, setAmpCfg] = useState(() => ({ ...AMP_PRESETS.metal }));
   const [palmMute, setPalmMute] = useState(false);
   const [droneOn, setDroneOn] = useState(false);
   const [chordStyle, setChordStyle] = useState("power"); // triad | power
@@ -170,6 +173,14 @@ export default function FretboardScaleExplorer() {
   }, [gridLen]);
   useEffect(() => () => { if (gridRef.current.timer) clearTimeout(gridRef.current.timer); }, []);
   useEffect(() => { TONE.drive = drive; }, [drive]);
+  useEffect(() => { initGuitar(); }, []);
+  useEffect(() => { setAmp(ampCfg); }, [ampCfg]);
+  useEffect(() => {
+    // the Dist button swaps between the clean voicing and the last dirty amp
+    if (!drive) setAmpCfg((c) => ({ ...c, drive: AMP_PRESETS.clean.drive, gain: AMP_PRESETS.clean.gain }));
+    else setAmpCfg((c) => ({ ...c, drive: AMP_PRESETS[ampKey].drive, gain: AMP_PRESETS[ampKey].gain }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drive]);
   useEffect(() => { TONE.mute = palmMute; }, [palmMute]);
   useEffect(() => {
     if (droneOn) startDrone(rootPc); else stopDrone();
@@ -1470,6 +1481,7 @@ export default function FretboardScaleExplorer() {
             <button className={panelTab === "chords" ? "on" : ""} onClick={() => setPanelTab("chords")}>Chords</button>
             <button className={panelTab === "prog" ? "on" : ""} onClick={() => setPanelTab("prog")}>Progressions</button>
             <button className={panelTab === "tab" ? "on" : ""} onClick={() => setPanelTab("tab")}>Tab</button>
+            <button className={panelTab === "amp" ? "on" : ""} onClick={() => setPanelTab("amp")}>Amp</button>
             <button className={panelTab === "find" ? "on" : ""} onClick={() => setPanelTab("find")}>Find scale</button>
             <button className={panelTab === "saved" ? "on" : ""} onClick={() => setPanelTab("saved")}>Saved</button>
           </div>
@@ -1536,6 +1548,54 @@ export default function FretboardScaleExplorer() {
                     })()}
                   </div>
                 )}
+              </>
+            )}
+
+            {panelTab === "amp" && (
+              <>
+                <div className="fse-section-label">Amp</div>
+                <div className="fse-chordgrid" style={{ marginBottom: 14 }}>
+                  {Object.entries(AMP_PRESETS).map(([k, v]) => (
+                    <button key={k} className={`fse-chord ${ampKey === k ? "active" : ""}`}
+                      onClick={() => { setAmpKey(k); setAmpCfg({ ...v }); setDrive(k !== "clean"); playPower(rootPc, 1.6); }}>
+                      <span className="fse-chord-name" style={{ fontSize: 13 }}>{v.name}</span>
+                      <span className="fse-chord-rn">gain {v.gain}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="fse-amprow">
+                  <span className="fse-tag">Cab</span>
+                  <select className="fse-select" style={{ padding: "8px 10px", fontSize: 12 }}
+                    value={ampCfg.cab} onChange={(e) => setAmpCfg((c) => ({ ...c, cab: e.target.value }))} aria-label="Cabinet">
+                    {Object.entries(CABS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                  </select>
+                  <button className="fse-pill" onClick={() => playPower(rootPc, 1.8)}>Test chord</button>
+                  <button className="fse-pill" onClick={() => playMidi(tuning.midi[0], 0, 2.2)}>Open low string</button>
+                </div>
+
+                {[
+                  ["drive", "Drive", 0, 1, 0.01],
+                  ["gain", "Gain", 0.5, 14, 0.1],
+                  ["bass", "Bass", -12, 12, 0.5],
+                  ["mid", "Mid", -12, 12, 0.5],
+                  ["treble", "Treble", -12, 12, 0.5],
+                  ["presence", "Presence", -8, 10, 0.5],
+                ].map(([key, label, min, max, step]) => (
+                  <div className="fse-amprow" key={key}>
+                    <span className="fse-tag">{label}</span>
+                    <input type="range" className="fse-slider" min={min} max={max} step={step}
+                      value={ampCfg[key]} aria-label={label}
+                      onChange={(e) => setAmpCfg((c) => ({ ...c, [key]: Number(e.target.value) }))} />
+                    <span className="fse-ampval">{typeof ampCfg[key] === "number" ? ampCfg[key].toFixed(key === "drive" ? 2 : 1) : ""}</span>
+                  </div>
+                ))}
+
+                <div className="fse-ivinfo">
+                  Notes are a plucked-string physical model, not oscillators &mdash; so palm mutes,
+                  pick attack and harmonic decay behave like a real string. That runs into a tube-style
+                  drive stage, a tone stack and a synthesised speaker cabinet.
+                </div>
               </>
             )}
 

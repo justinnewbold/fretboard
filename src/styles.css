@@ -64,7 +64,10 @@ body { margin: 0; background: #0E0C0A; }
     .fse-slotload:hover { color: #FFB347; }
     .fse-slotdel { background: transparent; border: none; border-left: 1px solid #2E2822; color: #6E6658; padding: 0 9px; cursor: pointer; font-size: 14px; }
     .fse-slotdel:hover { color: #E5544A; }
-    .fse-heat { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; }
+    .fse-amprow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.fse-amprow .fse-slider { flex: 1 1 auto; }
+.fse-ampval { min-width: 42px; text-align: right; font-size: 11px; color: #FFB347; font-family: 'IBM Plex Mono', monospace; }
+.fse-heat { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; background: #17130F; border: 1px solid #2E2822; border-radius: 10px; padding: 9px 12px; margin-bottom: 10px; }
     .fse-heatcell { min-width: 30px; text-align: center; padding: 5px 4px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
     .fse-heatcell.none { background: #1D1811; color: #4A4032; }
     .fse-heatcell.good { background: #10322E; color: #5FD3C4; }
