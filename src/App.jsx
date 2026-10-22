@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   SHARP_NAMES, midiToPc, pcName, INTERVAL_LABELS, INTERVAL_FULL, ROMAN,
   SCALES, SCALE_GROUPS, PEDAL_CHARACTER, TUNINGS, TUNING_GROUPS,
@@ -11,9 +11,28 @@ import {
   midiFile, downloadBytes, startMic, stopMic, freqToMidi, centsOff,
   startDrone, stopDrone, TONE,
   initGuitar, setAmp, AMP_PRESETS, CABS,
+  makeSequencer, atTime, now,
   INSTRUMENTS, loadInstrument, setInstrument, setSamplerEq,
 } from "./audio/engine.js";
 import { loadJSON, saveJSON } from "./storage.js";
+
+// One fret position. Memoised on primitive props, so a note changing only
+// re-renders the two cells that actually changed instead of the whole neck.
+const FretCell = memo(function FretCell({
+  midi, sLow, fret, cls, label, aria, thickness, isOpen, inPos, hasPos, inlay, doubleInlay, onFret,
+}) {
+  return (
+    <div className={`fse-cell ${isOpen ? "open" : ""} ${hasPos && inPos ? "in-pos" : ""}`} data-cell={`${sLow}:${fret}`}>
+      <div className="fse-stringline" style={{ height: `${thickness}px`, opacity: isOpen ? 0.35 : 1 }} />
+      {isOpen ? <div className="fse-nut" /> : <div className="fse-fretwire" />}
+      {inlay && <div className="fse-inlay" />}
+      {doubleInlay && (<><div className="fse-inlay d1" /><div className="fse-inlay d2" /></>)}
+      <button className={cls} onClick={() => onFret(midi, sLow, fret)} aria-label={aria}>
+        <span className="fse-lbl">{label}</span>
+      </button>
+    </div>
+  );
+});
 
 export default function FretboardScaleExplorer() {
   // scale / display
@@ -33,13 +52,28 @@ export default function FretboardScaleExplorer() {
   const [progChord, setProgChord] = useState(null);
   const [beatsPerChord, setBeatsPerChord] = useState(4);
   const beatsRef = useRef(4);
-  const progRef = useRef({ timer: null });
   const [mode, setMode] = useState("scale"); // scale | riff | intervals | quiz
   const [drive, setDrive] = useState(true);
   const [ampKey, setAmpKey] = useState("metal");
   const [ampCfg, setAmpCfg] = useState(() => ({ ...AMP_PRESETS.metal }));
   const [instKey, setInstKey] = useState("distortion_guitar");
   const [instLoaded, setInstLoaded] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
+  // iOS keeps audio suspended until a gesture; the first tap anywhere unlocks it
+  useEffect(() => {
+    const unlock = () => {
+      try {
+        const ctx = ensureCtx();
+        const check = () => setAudioReady(ctx.state === "running");
+        ctx.resume().then(check, check);
+        setTimeout(check, 300);
+      } catch (e) { /* no audio */ }
+    };
+    try { const c = ensureCtx(); if (c.state === "running") setAudioReady(true); } catch (e) { /* noop */ }
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    return () => { window.removeEventListener("pointerdown", unlock); window.removeEventListener("keydown", unlock); };
+  }, []);
   const [tone, setTone] = useState({ bass: 0, mid: 0, treble: 0, level: 0.85 });
   const [palmMute, setPalmMute] = useState(false);
   const [droneOn, setDroneOn] = useState(false);
@@ -57,7 +91,6 @@ export default function FretboardScaleExplorer() {
   const [arrangement, setArrangement] = useState("A A B A");
   const [songPlaying, setSongPlaying] = useState(false);
   const [songPos, setSongPos] = useState(-1);
-  const songRef = useRef({ timer: null });
   const [drumsOn, setDrumsOn] = useState(true);
   const drumsOnRef = useRef(true);
   const curPatRef = useRef("A");
@@ -87,11 +120,19 @@ export default function FretboardScaleExplorer() {
     }
     expectRef.current = { pc, hit: false };
   };
-  const gridRef = useRef({ timer: null });
   const gridStepsRef = useRef([]);
   const patternsRef = useRef(null);
   const meterRef = useRef("4");
   const loopCountRef = useRef(0);
+  const seqScale = useRef(makeSequencer());
+  const seqProg = useRef(makeSequencer());
+  const seqRiff = useRef(makeSequencer());
+  const seqGrid = useRef(makeSequencer());
+  const seqSong = useRef(makeSequencer());
+  const pedalRef = useRef({ midi: 40, fret: 0 });
+  const visRef = useRef([]); // pending visual timeouts, cleared on stop
+  const vis = (t, fn) => { visRef.current.push(atTime(t, fn)); };
+  const clearVis = () => { visRef.current.forEach(clearTimeout); visRef.current = []; };
   const speedTrainRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [panelTab, setPanelTab] = useState("scale"); // scale | chords | prog
@@ -107,13 +148,15 @@ export default function FretboardScaleExplorer() {
   const [subdiv, setSubdiv] = useState(1);
   const loopRef = useRef(false);
   const subdivRef = useRef(1);
-  const seqRef = useRef({ timer: null });
 
   // metronome
   const [metroOn, setMetroOn] = useState(false);
   const [bpm, setBpm] = useState(120);
   const [beatFlash, setBeatFlash] = useState(-1);
   const [gapSilent, setGapSilent] = useState(false);
+  const [haptics, setHaptics] = useState(() => typeof navigator !== "undefined" && !!navigator.vibrate);
+  const hapticsRef = useRef(false);
+  useEffect(() => { hapticsRef.current = haptics; }, [haptics]);
   const [tapMsg, setTapMsg] = useState("");
   const bpmRef = useRef(120);
   const metroRef = useRef({ timer: null, nextTime: 0, beat: 0 });
@@ -176,7 +219,6 @@ export default function FretboardScaleExplorer() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridLen]);
-  useEffect(() => () => { if (gridRef.current.timer) clearTimeout(gridRef.current.timer); }, []);
   useEffect(() => { TONE.drive = drive; }, [drive]);
   useEffect(() => { initGuitar(); }, []);
   useEffect(() => {
@@ -209,8 +251,8 @@ export default function FretboardScaleExplorer() {
   useEffect(() => () => stopDrone(), []);
   useEffect(() => () => {
     if (metroRef.current.timer) clearInterval(metroRef.current.timer);
-    if (seqRef.current.timer) clearTimeout(seqRef.current.timer);
-    if (progRef.current.timer) clearTimeout(progRef.current.timer);
+    [seqScale, seqProg, seqRiff, seqGrid, seqSong].forEach((r) => r.current.stop());
+    clearVis();
   }, []);
 
   // ----- derived -----
@@ -269,6 +311,7 @@ export default function FretboardScaleExplorer() {
   // ----- pedal tone -----
   const pedalMidi = tuning.midi[0] + pedalFret;
   const pedalPc = midiToPc(pedalMidi);
+  pedalRef.current = { midi: pedalMidi, fret: pedalFret };
 
   const lowPc = midiToPc(tuning.midi[0]);
   const rootFretLow = ((rootPc - lowPc) + 12) % 12;
@@ -313,7 +356,10 @@ export default function FretboardScaleExplorer() {
         if (audible) playClick(m.nextTime, b === 0, starts.has(b));
         const delay = Math.max(0, (m.nextTime - ctx.currentTime) * 1000);
         const vis = audible;
-        setTimeout(() => { setBeatFlash(b); setGapSilent(!vis); }, delay);
+        setTimeout(() => {
+          setBeatFlash(b); setGapSilent(!vis);
+          if (hapticsRef.current && vis && navigator.vibrate) navigator.vibrate(b === 0 ? 22 : 9);
+        }, delay);
         m.nextTime += 60 / bpmRef.current;
         m.beat++;
       }
@@ -342,10 +388,34 @@ export default function FretboardScaleExplorer() {
     } else setTapMsg("out of range");
   };
 
+  const stopAll = () => { stopScale(); stopProg(); stopGrid(); stopSong(); };
+
+  // ----- keep the screen on while anything is running -----
+  const wakeRef = useRef(null);
+  const anythingRunning = playing || progPlaying || gridPlaying || songPlaying || metroOn || micOn;
+  useEffect(() => {
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        if (!("wakeLock" in navigator)) return;
+        if (wakeRef.current) return;
+        const lock = await navigator.wakeLock.request("screen");
+        if (cancelled) { lock.release(); return; }
+        wakeRef.current = lock;
+        lock.addEventListener("release", () => { wakeRef.current = null; });
+      } catch (e) { /* not granted; fine */ }
+    };
+    const release = () => { if (wakeRef.current) { wakeRef.current.release(); wakeRef.current = null; } };
+    if (anythingRunning) acquire(); else release();
+    const onVis = () => { if (document.visibilityState === "visible" && anythingRunning) acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", onVis); };
+  }, [anythingRunning]);
+
   // ----- scale playback -----
   const stopScale = () => {
-    if (seqRef.current.timer) clearTimeout(seqRef.current.timer);
-    seqRef.current.timer = null;
+    seqScale.current.stop();
+    clearVis();
     setPlaying(false);
     setActivePos(null);
     setActiveIv(null);
@@ -353,49 +423,42 @@ export default function FretboardScaleExplorer() {
   };
   const playScale = () => {
     if (playing) { stopScale(); return; }
-    if (progRef.current.timer) { clearTimeout(progRef.current.timer); progRef.current.timer = null; setProgPlaying(false); setProgStep(-1); }
+    stopProg(); stopGrid(); stopSong();
     const base = buildPath(tuning.midi, rootPc, scale.intervals, octaves, fretCount);
     const path = applyDirection(base, direction);
     if (!path.length) return;
     setPlaying(true);
     loopCountRef.current = 0;
     if (scoreOn) { setScore({ hits: 0, total: 0, streak: 0 }); expectRef.current = { pc: null, hit: false }; }
-    let idx = 0;
-    const step = () => {
-      const pos = path[idx];
-      const noteMs = 60000 / bpmRef.current / subdivRef.current;
-      playMidi(pos.midi, 0, Math.min(0.75, (noteMs / 1000) * 1.6));
-      if (harmonyRef.current) {
-        const h = harmonize(pos.midi, harmonyRef.current);
-        if (h) playMidi(h, 0.004, Math.min(0.75, (noteMs / 1000) * 1.6), { gain: 0.75 });
-        setHarmonyPos(h ? posForMidi(h) : null);
-      } else setHarmonyPos(null);
-      setActivePos({ s: pos.string, f: pos.fret });
-      setActiveIv((midiToPc(pos.midi) - rootPc + 12) % 12);
-      expectNote(midiToPc(pos.midi));
-      idx++;
-      if (idx >= path.length) {
-        if (loopRef.current) {
-          idx = 0;
-          loopCountRef.current += 1;
-          if (speedTrainRef.current && loopCountRef.current % 2 === 0) {
-            setBpm((b) => Math.min(240, b + 5));
-          }
-          seqRef.current.timer = setTimeout(step, noteMs);
-        } else {
-          seqRef.current.timer = setTimeout(() => { setPlaying(false); setActivePos(null); setActiveIv(null); }, noteMs);
-        }
-        return;
+    const len = path.length;
+    seqScale.current.start((i, t) => {
+      if (i > 0 && i % len === 0) {
+        if (!loopRef.current) return null;
+        loopCountRef.current += 1;
+        if (speedTrainRef.current && loopCountRef.current % 2 === 0) setBpm((b) => Math.min(240, b + 5));
       }
-      seqRef.current.timer = setTimeout(step, noteMs);
-    };
-    step();
+      const pos = path[i % len];
+      const noteSec = 60 / bpmRef.current / subdivRef.current;
+      const when = t - now();
+      playMidi(pos.midi, when, Math.min(0.75, noteSec * 1.6));
+      let h = null;
+      if (harmonyRef.current) {
+        h = harmonize(pos.midi, harmonyRef.current);
+        if (h) playMidi(h, when + 0.004, Math.min(0.75, noteSec * 1.6), { gain: 0.75 });
+      }
+      vis(t, () => {
+        setActivePos({ s: pos.string, f: pos.fret });
+        setActiveIv((midiToPc(pos.midi) - rootPc + 12) % 12);
+        setHarmonyPos(h ? posForMidi(h) : null);
+        expectNote(midiToPc(pos.midi));
+      });
+      return { seconds: noteSec };
+    }, () => { setPlaying(false); setActivePos(null); setActiveIv(null); setHarmonyPos(null); });
   };
 
   // ----- progression playback -----
   const stopProg = () => {
-    if (progRef.current.timer) clearTimeout(progRef.current.timer);
-    progRef.current.timer = null;
+    seqProg.current.stop();
     setProgPlaying(false);
     setProgStep(-1);
     setProgChord(null);
@@ -403,67 +466,54 @@ export default function FretboardScaleExplorer() {
   const playProg = () => {
     if (progPlaying) { stopProg(); return; }
     if (progIdx === null || !chords.length) return;
-    stopScale();
+    stopScale(); stopGrid(); stopSong();
     setChordIdx(null);
     const len = PROGRESSIONS[progIdx].degrees.length;
     setProgPlaying(true);
-    let i = 0;
-    const step = () => {
+    seqProg.current.start((i, t) => {
       const ch = progChordAt(progIdx, i % len);
+      const chordSec = (60 / bpmRef.current) * beatsRef.current;
       if (ch) {
-        const beatMs = 60000 / bpmRef.current;
-        const sh = chordVoicing(tuning.midi, ch.pcs, ch.rootPc, fretCount,
-          { maxAbove: ch.pcs.length <= 2 ? 2 : 5 });
-        const dur = Math.min(2.4, (beatMs * beatsRef.current) / 1000);
-        if (sh && sh.length) sh.forEach((v, k) => playMidi(tuning.midi[v.string] + v.fret, k * 0.028, dur));
+        const when = t - now();
+        const sh = chordVoicing(tuning.midi, ch.pcs, ch.rootPc, fretCount, { maxAbove: ch.pcs.length <= 2 ? 2 : 5 });
+        const dur = Math.min(2.4, chordSec);
+        if (sh && sh.length) sh.forEach((v, k) => playMidi(tuning.midi[v.string] + v.fret, when + k * 0.028, dur));
         else playChord(ch.pcs, ch.rootPc, dur);
-        setProgChord(ch);
-        setProgStep(i % len);
+        vis(t, () => { setProgChord(ch); setProgStep(i % len); });
       }
-      i++;
-      progRef.current.timer = setTimeout(step, (60000 / bpmRef.current) * beatsRef.current);
-    };
-    step();
+      return { seconds: chordSec };
+    });
   };
 
   // ----- riff / pedal tone playback -----
   const playRiff = () => {
     if (playing) { stopScale(); return; }
-    stopProg();
-    // notes above the pedal, from the scale, on the upper strings
-    const notes = buildPath(tuning.midi, rootPc, scale.intervals, octaves, fretCount)
-      .filter((n) => n.string > 0);
+    stopProg(); stopGrid(); stopSong();
+    const notes = buildPath(tuning.midi, rootPc, scale.intervals, octaves, fretCount).filter((n) => n.string > 0);
     if (!notes.length) return;
     setPlaying(true);
     loopCountRef.current = 0;
-    let i = 0;
-    const step = () => {
-      const noteMs = 60000 / bpmRef.current / subdivRef.current;
-      const onPedal = i % 2 === 0;
-      if (onPedal) {
-        playMidi(pedalMidi, 0, noteMs / 1000, { mute: true });
-        setActivePos({ s: 0, f: pedalFret });
-        setActiveIv(null);
+    const total = notes.length * 2;
+    seqScale.current.start((i, t) => {
+      if (i > 0 && i % total === 0) {
+        if (!loopRef.current) return null;
+        loopCountRef.current += 1;
+        if (speedTrainRef.current && loopCountRef.current % 2 === 0) setBpm((b) => Math.min(240, b + 5));
+      }
+      const k = i % total;
+      const noteSec = 60 / bpmRef.current / subdivRef.current;
+      const when = t - now();
+      const ped = pedalRef.current;
+      if (k % 2 === 0) {
+        playMidi(ped.midi, when, noteSec, { mute: true });
+        vis(t, () => { setActivePos({ s: 0, f: ped.fret }); setActiveIv(null); });
       } else {
-        const n = notes[Math.floor(i / 2) % notes.length];
-        playMidi(n.midi, 0, Math.min(0.6, (noteMs / 1000) * 1.4));
-        setActivePos({ s: n.string, f: n.fret });
-        setActiveIv((midiToPc(n.midi) - rootPc + 12) % 12);
+        const n = notes[Math.floor(k / 2) % notes.length];
+        playMidi(n.midi, when, Math.min(0.6, noteSec * 1.4));
+        vis(t, () => { setActivePos({ s: n.string, f: n.fret }); setActiveIv((midiToPc(n.midi) - rootPc + 12) % 12); });
       }
-      i++;
-      if (i >= notes.length * 2) {
-        if (loopRef.current) {
-          i = 0;
-          loopCountRef.current += 1;
-          if (speedTrainRef.current && loopCountRef.current % 2 === 0) setBpm((b) => Math.min(240, b + 5));
-        } else {
-          seqRef.current.timer = setTimeout(() => { setPlaying(false); setActivePos(null); setActiveIv(null); }, noteMs);
-          return;
-        }
-      }
-      seqRef.current.timer = setTimeout(step, noteMs);
-    };
-    step();
+      return { seconds: noteSec };
+    }, () => { setPlaying(false); setActivePos(null); setActiveIv(null); });
   };
 
   // ----- riff grid: find the neck position for a note above the pedal -----
@@ -475,53 +525,50 @@ export default function FretboardScaleExplorer() {
     return null;
   };
   const stopGrid = () => {
-    if (gridRef.current.timer) clearTimeout(gridRef.current.timer);
-    gridRef.current.timer = null;
+    seqGrid.current.stop();
+    clearVis();
     setGridPlaying(false);
     setGridStep(-1);
     setActivePos(null);
   };
+  // one grid step of a pattern: audio at t, visuals when it is heard
+  const fireStep = (pat, idxNow, accented, t, stepSec, onVisual) => {
+    const when = t - now();
+    const ped = pedalRef.current;
+    const v = pat.g[idxNow];
+    let pos = null;
+    if (v === "P") {
+      playMidi(ped.midi, when, stepSec, { mute: true, gain: accented ? 1.35 : 1 });
+      pos = { s: 0, f: ped.fret };
+    } else if (typeof v === "number") {
+      const p = posForMidi(ped.midi + v);
+      playMidi(ped.midi + v, when, Math.min(0.6, stepSec * 1.5), { gain: accented ? 1.3 : 1 });
+      pos = p ? { s: p.string, f: p.fret } : null;
+    }
+    if (drumsOnRef.current) {
+      if (pat.d.k[idxNow]) playDrum("k", when, accented);
+      if (pat.d.s[idxNow]) playDrum("s", when, accented);
+      if (pat.d.h[idxNow]) playDrum("h", when, accented);
+    }
+    vis(t, () => { setActivePos(pos); onVisual(); });
+  };
   const playGrid = () => {
     if (gridPlaying) { stopGrid(); return; }
-    stopScale(); stopProg();
-    const steps = gridStepsRef.current;
-    if (!steps.some((x) => x !== null)) return;
+    stopScale(); stopProg(); stopSong();
+    if (!gridStepsRef.current.some((x) => x !== null)) return;
     setGridPlaying(true);
-    let i = 0;
-    const tick = () => {
-      const stepMs = 60000 / bpmRef.current / subdivRef.current;
+    seqGrid.current.start((i, t) => {
+      const pat = patternsRef.current[curPatRef.current];
+      const len = pat.g.length;
+      if (i > 0 && i % len === 0 && !loopRef.current) return null;
+      const idxNow = i % len;
+      const stepSec = 60 / bpmRef.current / subdivRef.current;
       const groups = parseGroups(meterRef.current);
-      const starts = groupStarts(groups);
       const total = groups.reduce((a, b) => a + b, 0);
-      const idxNow = i % gridStepsRef.current.length;
-      const v = gridStepsRef.current[idxNow];
-      const accented = starts.has(i % total);
-      setGridStep(idxNow);
-      if (drumsOnRef.current) {
-        const d = patternsRef.current[curPatRef.current].d;
-        if (d.k[idxNow]) playDrum("k", 0, accented);
-        if (d.s[idxNow]) playDrum("s", 0, accented);
-        if (d.h[idxNow]) playDrum("h", 0, accented);
-      }
-      if (v === "P") {
-        playMidi(pedalMidi, 0, stepMs / 1000, { mute: true, gain: accented ? 1.35 : 1 });
-        setActivePos({ s: 0, f: pedalFret });
-      } else if (typeof v === "number") {
-        const pos = posForMidi(pedalMidi + v);
-        playMidi(pedalMidi + v, 0, Math.min(0.6, (stepMs / 1000) * 1.5), { gain: accented ? 1.3 : 1 });
-        setActivePos(pos ? { s: pos.string, f: pos.fret } : null);
-      } else {
-        setActivePos(null);
-      }
-      i++;
-      if (i >= gridStepsRef.current.length && !loopRef.current) {
-        gridRef.current.timer = setTimeout(() => { setGridPlaying(false); setGridStep(-1); setActivePos(null); }, stepMs);
-        return;
-      }
-      if (i >= gridStepsRef.current.length) i = 0;
-      gridRef.current.timer = setTimeout(tick, stepMs);
-    };
-    tick();
+      const accented = groupStarts(groups).has(i % total);
+      fireStep(pat, idxNow, accented, t, stepSec, () => setGridStep(idxNow));
+      return { seconds: stepSec };
+    }, () => { setGridPlaying(false); setGridStep(-1); setActivePos(null); });
   };
   const clearGrid = () => setPatterns((prev) => ({ ...prev, [curPat]: emptyPat(gridLen) }));
   const gridTab = () => {
@@ -547,8 +594,8 @@ export default function FretboardScaleExplorer() {
   const parseArrangement = (str) =>
     String(str).toUpperCase().split(/[\s,]+/).filter((x) => ["A", "B", "C", "D"].includes(x)).slice(0, 32);
   const stopSong = () => {
-    if (songRef.current.timer) clearTimeout(songRef.current.timer);
-    songRef.current.timer = null;
+    seqSong.current.stop();
+    clearVis();
     setSongPlaying(false);
     setSongPos(-1);
     setGridStep(-1);
@@ -560,46 +607,28 @@ export default function FretboardScaleExplorer() {
     if (!order.length) return;
     stopGrid(); stopScale(); stopProg();
     setSongPlaying(true);
-    let bar = 0, i = 0;
-    const tick = () => {
-      const stepMs = 60000 / bpmRef.current / subdivRef.current;
+    // flatten the arrangement into (bar, step) pairs once; lengths may differ per pattern
+    seqSong.current.start((i, t) => {
+      // walk bars to find where step i lands
+      let rem = i, bar = 0, pat = null, len = 0;
+      const bars = order.length;
+      let guard = 0;
+      while (guard++ < 10000) {
+        pat = patternsRef.current[order[bar % bars]];
+        len = pat.g.length;
+        if (rem < len) break;
+        rem -= len;
+        bar += 1;
+        if (bar >= bars && !loopRef.current) return null;
+      }
+      const stepSec = 60 / bpmRef.current / subdivRef.current;
       const groups = parseGroups(meterRef.current);
-      const starts = groupStarts(groups);
       const total = groups.reduce((a, b) => a + b, 0);
-      const pat = patternsRef.current[order[bar % order.length]];
-      const len = pat.g.length;
-      const idxNow = i % len;
-      const accented = starts.has(i % total);
-      setSongPos(bar % order.length);
-      setGridStep(idxNow);
-      const v = pat.g[idxNow];
-      if (v === "P") {
-        playMidi(pedalMidi, 0, stepMs / 1000, { mute: true, gain: accented ? 1.35 : 1 });
-        setActivePos({ s: 0, f: pedalFret });
-      } else if (typeof v === "number") {
-        const pos = posForMidi(pedalMidi + v);
-        playMidi(pedalMidi + v, 0, Math.min(0.6, (stepMs / 1000) * 1.5), { gain: accented ? 1.3 : 1 });
-        setActivePos(pos ? { s: pos.string, f: pos.fret } : null);
-      } else setActivePos(null);
-      if (drumsOnRef.current) {
-        if (pat.d.k[idxNow]) playDrum("k", 0, accented);
-        if (pat.d.s[idxNow]) playDrum("s", 0, accented);
-        if (pat.d.h[idxNow]) playDrum("h", 0, accented);
-      }
-      i++;
-      if (i >= len) {
-        i = 0; bar++;
-        if (bar >= order.length) {
-          if (!loopRef.current) {
-            songRef.current.timer = setTimeout(() => { setSongPlaying(false); setSongPos(-1); setGridStep(-1); setActivePos(null); }, stepMs);
-            return;
-          }
-          bar = 0;
-        }
-      }
-      songRef.current.timer = setTimeout(tick, stepMs);
-    };
-    tick();
+      const accented = groupStarts(groups).has(i % total);
+      const barIdx = bar % bars;
+      fireStep(pat, rem, accented, t, stepSec, () => { setSongPos(barIdx); setGridStep(rem); });
+      return { seconds: stepSec };
+    }, () => { setSongPlaying(false); setSongPos(-1); setGridStep(-1); setActivePos(null); });
   };
 
   // ----- MIDI export -----
@@ -896,12 +925,61 @@ export default function FretboardScaleExplorer() {
     }
   };
 
+  // ----- keyboard shortcuts -----
+  const [showKeys, setShowKeys] = useState(false);
+  const keyRef = useRef(null);
+  keyRef.current = {
+    togglePlay: () => {
+      if (mode === "scale") playScale();
+      else if (mode === "riff") { if (gridStepsRef.current.some((x) => x !== null)) playGrid(); else playRiff(); }
+    },
+    stop: stopAll,
+    bpm: (d) => setBpm((b) => Math.max(40, Math.min(240, b + d))),
+    loop: () => setLoop((v) => !v),
+    mic: toggleMic,
+    dist: () => setDrive((v) => !v),
+    pm: () => setPalmMute((v) => !v),
+    click: () => (metroOn ? stopMetro() : startMetro()),
+    mode: (m) => { setMode(m); stopAll(); if (m === "quiz") startQuiz(); if (m === "tuner" && !micOn) toggleMic(); },
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || "";
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = keyRef.current;
+      switch (e.key) {
+        case " ": e.preventDefault(); k.togglePlay(); break;
+        case "Escape": k.stop(); break;
+        case "ArrowUp": e.preventDefault(); k.bpm(e.shiftKey ? 10 : 1); break;
+        case "ArrowDown": e.preventDefault(); k.bpm(e.shiftKey ? -10 : -1); break;
+        case "ArrowRight": e.preventDefault(); k.bpm(5); break;
+        case "ArrowLeft": e.preventDefault(); k.bpm(-5); break;
+        case "l": case "L": k.loop(); break;
+        case "m": case "M": k.mic(); break;
+        case "d": case "D": k.dist(); break;
+        case "p": case "P": k.pm(); break;
+        case "c": case "C": k.click(); break;
+        case "1": k.mode("scale"); break;
+        case "2": k.mode("riff"); break;
+        case "3": k.mode("intervals"); break;
+        case "4": k.mode("quiz"); break;
+        case "5": k.mode("tuner"); break;
+        case "?": setShowKeys((v) => !v); break;
+        default: break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // ----- fret click router -----
+  const onFretRef = useRef(null);
+  const onFretStable = useCallback((midi, sLow, fret) => onFretRef.current && onFretRef.current(midi, sLow, fret), []);
   const onFret = (midi, sLow, fret) => {
     playMidi(midi);
     if (mode === "quiz") answerQuizByPc(midiToPc(midi));
     else if (mode === "intervals") setRefPos({ s: sLow, f: fret, pc: midiToPc(midi), midi });
   };
+  onFretRef.current = onFret;
 
   // ----- dot rendering logic -----
   const dotFor = (midi, sLow, fret) => {
@@ -976,6 +1054,21 @@ export default function FretboardScaleExplorer() {
   // styles live in ../styles.css
 
 
+  // keep the sounding note on screen without yanking the view around
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el || !activePos) return;
+    const cell = el.querySelector(`[data-cell="${activePos.s}:${activePos.f}"]`);
+    if (!cell) return;
+    const cr = cell.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const margin = 36;
+    if (cr.left < er.left + margin || cr.right > er.right - margin) {
+      const target = el.scrollLeft + (cr.left - er.left) - er.width / 2 + cr.width / 2;
+      el.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
+    }
+  }, [activePos]);
+
   const board = (
     <div className="fse-board-scroll" ref={boardRef}>
       <div className={`fse-board ${lefty ? "lefty" : ""}`} style={{ "--cw": `${cellW}px` }}>
@@ -1003,19 +1096,20 @@ export default function FretboardScaleExplorer() {
                   harmonyPos && harmonyPos.string === sLow && harmonyPos.fret === fret ? "harm" : "",
                 ].filter(Boolean).join(" ");
                 return (
-                  <div className={`fse-cell ${fret === 0 ? "open" : ""} ${posFrets && inPos ? "in-pos" : ""}`} key={fret}>
-                    <div className="fse-stringline" style={{ height: `${thickness}px`, opacity: fret === 0 ? 0.35 : 1 }} />
-                    {fret === 0 ? <div className="fse-nut" /> : <div className="fse-fretwire" />}
-                    {sIdx === midString && fret > 0 && INLAY_FRETS.includes(fret) && <div className="fse-inlay" />}
-                    {sIdx === midString && DOUBLE_INLAY.includes(fret) && (<><div className="fse-inlay d1" /><div className="fse-inlay d2" /></>)}
-                    <button
-                      className={cls}
-                      onClick={() => onFret(midi, sLow, fret)}
-                      aria-label={`String ${sLow + 1}, fret ${fret}, ${pcName(midiToPc(midi), useFlats)}`}
-                    >
-                      <span className="fse-lbl">{dot ? dot.label : ""}</span>
-                    </button>
-                  </div>
+                  <FretCell
+                    key={fret}
+                    midi={midi} sLow={sLow} fret={fret}
+                    cls={cls}
+                    label={dot ? dot.label : ""}
+                    aria={`String ${sLow + 1}, fret ${fret}, ${pcName(midiToPc(midi), useFlats)}`}
+                    thickness={thickness}
+                    isOpen={fret === 0}
+                    inPos={inPos}
+                    hasPos={!!posFrets}
+                    inlay={sIdx === midString && fret > 0 && INLAY_FRETS.includes(fret)}
+                    doubleInlay={sIdx === midString && DOUBLE_INLAY.includes(fret)}
+                    onFret={onFretStable}
+                  />
                 );
               })}
             </div>
@@ -1037,11 +1131,11 @@ export default function FretboardScaleExplorer() {
       <div className="fse-topbar fse-noprint">
         <h1 className="fse-title">Fretboard</h1>
         <div className="fse-tabs" role="tablist" aria-label="Mode">
-          <button className={mode === "scale" ? "on" : ""} onClick={() => { setMode("scale"); stopScale(); }}>Scales</button>
-          <button className={mode === "riff" ? "on" : ""} onClick={() => { setMode("riff"); stopScale(); stopProg(); }}>Riff</button>
-          <button className={mode === "intervals" ? "on" : ""} onClick={() => { setMode("intervals"); stopScale(); stopProg(); setRefPos(null); }}>Intervals</button>
-          <button className={mode === "quiz" ? "on" : ""} onClick={() => { setMode("quiz"); stopScale(); stopProg(); startQuiz(); }}>Quiz</button>
-          <button className={mode === "tuner" ? "on" : ""} onClick={() => { setMode("tuner"); stopScale(); stopProg(); if (!micOn) toggleMic(); }}>Tuner</button>
+          <button className={mode === "scale" ? "on" : ""} onClick={() => { setMode("scale"); stopAll(); }}>Scales</button>
+          <button className={mode === "riff" ? "on" : ""} onClick={() => { setMode("riff"); stopAll(); }}>Riff</button>
+          <button className={mode === "intervals" ? "on" : ""} onClick={() => { setMode("intervals"); stopAll(); setRefPos(null); }}>Intervals</button>
+          <button className={mode === "quiz" ? "on" : ""} onClick={() => { setMode("quiz"); stopAll(); startQuiz(); }}>Quiz</button>
+          <button className={mode === "tuner" ? "on" : ""} onClick={() => { setMode("tuner"); stopAll(); if (!micOn) toggleMic(); }}>Tuner</button>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button className={`fse-iconbtn ${settingsOpen ? "on" : ""}`} onClick={() => setSettingsOpen(!settingsOpen)} aria-expanded={settingsOpen}>&#9881;</button>
@@ -1050,6 +1144,27 @@ export default function FretboardScaleExplorer() {
           <button className="fse-iconbtn" onClick={() => window.print()} title="Print chart">&#128424;</button>
         </div>
       </div>
+
+      {(!audioReady || !instLoaded) && (
+        <div className="fse-status fse-noprint">
+          {!audioReady
+            ? <span>&#128266; Tap anywhere to enable sound</span>
+            : <span><span className="fse-spin" /> Loading {INSTRUMENTS[instKey] ? INSTRUMENTS[instKey].name.toLowerCase() : ""} samples&hellip;</span>}
+        </div>
+      )}
+
+      {showKeys && (
+        <div className="fse-drawer fse-noprint">
+          <div className="fse-section-label">Keyboard</div>
+          <div className="fse-keys">
+            <span><kbd>Space</kbd> play / stop</span><span><kbd>Esc</kbd> stop everything</span>
+            <span><kbd>&larr;</kbd> <kbd>&rarr;</kbd> tempo &plusmn;5</span><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> tempo &plusmn;1 (shift: 10)</span>
+            <span><kbd>L</kbd> loop</span><span><kbd>C</kbd> click</span><span><kbd>M</kbd> mic</span>
+            <span><kbd>D</kbd> distortion</span><span><kbd>P</kbd> palm mute</span>
+            <span><kbd>1</kbd>&ndash;<kbd>5</kbd> switch mode</span><span><kbd>?</kbd> hide this</span>
+          </div>
+        </div>
+      )}
 
       {(micOn || micErr || shareMsg) && (
         <div className="fse-micbar fse-noprint">
@@ -1086,6 +1201,15 @@ export default function FretboardScaleExplorer() {
               <button className={!useFlats ? "on" : ""} onClick={() => setUseFlats(false)}>&#9839; Sharps</button>
               <button className={useFlats ? "on" : ""} onClick={() => setUseFlats(true)}>&#9837; Flats</button>
             </div>
+          </div>
+          <div className="fse-drawer-row">
+            <span className="fse-tag">Feel</span>
+            <button className={`fse-pill ${haptics ? "active" : ""}`} onClick={() => setHaptics(!haptics)} aria-pressed={haptics}
+              disabled={typeof navigator === "undefined" || !navigator.vibrate} title="Vibrate on the click (Android)">
+              Haptic click
+            </button>
+            <button className="fse-pill" onClick={() => setShowKeys(!showKeys)}>Keyboard shortcuts</button>
+            <span className="fse-hint">Screen stays awake while anything plays.</span>
           </div>
           <div className="fse-drawer-row">
             <span className="fse-tag">Mic</span>
