@@ -8,7 +8,7 @@ let shaper = null;
 let droneNodes = null;
 
 export function ensureCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: "interactive" });
   if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
 }
@@ -509,6 +509,56 @@ export function playSample(midi, when = 0, dur = 0.9, opts = {}) {
     return false;
   }
 }
+
+// ---------- Lookahead scheduler ----------
+// Everything that plays in time goes through this: steps are scheduled a little
+// ahead on the audio clock, so playback stays locked to the metronome and
+// survives the main thread being busy or a phone throttling timers.
+export function makeSequencer() {
+  const state = { timer: null, nextTime: 0, i: 0, running: false };
+  const LOOKAHEAD = 0.12;   // seconds of audio scheduled ahead
+  const TICK = 25;          // ms between scheduler passes
+  const api = {
+    get running() { return state.running; },
+    // stepFn(i, t) must schedule its own audio at absolute time t and return
+    // { seconds } for the step length, or null to end the sequence.
+    start(stepFn, onEnd) {
+      api.stop();
+      const ctx = ensureCtx();
+      state.nextTime = ctx.currentTime + 0.05;
+      state.i = 0;
+      state.running = true;
+      const pass = () => {
+        while (state.running && state.nextTime < ctx.currentTime + LOOKAHEAD) {
+          const r = stepFn(state.i, state.nextTime);
+          if (!r) {
+            const wait = Math.max(0, (state.nextTime - ctx.currentTime) * 1000);
+            api.stop();
+            if (onEnd) setTimeout(onEnd, wait);
+            return;
+          }
+          state.nextTime += r.seconds;
+          state.i += 1;
+        }
+      };
+      pass();
+      state.timer = setInterval(pass, TICK);
+    },
+    stop() {
+      if (state.timer) clearInterval(state.timer);
+      state.timer = null;
+      state.running = false;
+    },
+  };
+  return api;
+}
+// Run a visual update at the moment an audio event is heard
+export function atTime(t, fn) {
+  const ctx = ensureCtx();
+  const delay = Math.max(0, (t - ctx.currentTime) * 1000);
+  return setTimeout(fn, delay);
+}
+export function now() { return ensureCtx().currentTime; }
 
 // ---------- Drums ----------
 export function noiseBuffer(ctx) {
